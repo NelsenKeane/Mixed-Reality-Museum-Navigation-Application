@@ -1,0 +1,108 @@
+using UnityEngine;
+
+/// <summary>
+/// Tutorial step 1: "Pinch to Click".
+/// Spawns a floating practice button (app-styled, see PinchButtonPracticeTarget) in front
+/// of the player. The step completes after the player pinch-presses it the required number
+/// of times; between presses the button hops to a nearby position so the player also
+/// practices re-aiming the hand ray.
+/// </summary>
+public class PinchClickStep : TutorialStep
+{
+    [Header("Success Condition")]
+    [Tooltip("How many successful pinch-presses are needed before the step completes.")]
+    public int requiredClicks = 2;
+
+    [Tooltip("How far the button hops sideways/vertically after each successful press, in meters.")]
+    public float repositionRadius = 0.18f;
+
+    private PinchButtonPracticeTarget target;
+    private int clickCount;
+
+    public override TutorialGestureGizmo.GestureMode GizmoMode
+    {
+        get { return TutorialGestureGizmo.GestureMode.PinchClick; }
+    }
+
+    private void Reset()
+    {
+        stepTitle = "Langkah 1: Cubit untuk Klik";
+        instructionText =
+            "Halakan sinar tangan anda ke butang, kemudian CUBIT ibu jari dan jari telunjuk untuk menekannya. Tekan sebanyak 2 kali!";
+    }
+
+    protected override void OnStepBegin()
+    {
+        // Reset() only runs in the Editor when the component is added manually;
+        // make sure runtime-added instances still get the default copy.
+        if (string.IsNullOrEmpty(instructionText)) Reset();
+
+        clickCount = 0;
+
+        Vector3 pos;
+        Quaternion rot;
+        Manager.GetPlacementPose(Manager.practiceDistance, Manager.practiceHeightOffset, out pos, out rot);
+
+        target = PinchButtonPracticeTarget.Create(pos, "TEKAN");
+        target.Pressed += OnTargetClicked;
+    }
+
+    protected override void OnStepEnd()
+    {
+        DestroyTarget();
+    }
+
+    private void OnTargetClicked()
+    {
+        clickCount++;
+
+        if (Manager != null && Manager.Audio != null && target != null)
+        {
+            Manager.Audio.PlayGesturePerformed(target.transform.position);
+        }
+
+        if (clickCount >= requiredClicks)
+        {
+            ReportCompleted();
+            return;
+        }
+
+        // Hop the SAME button to a nearby spot (biased sideways so it stays comfortably
+        // reachable). It must be moved, not destroyed and recreated: destroying an
+        // interactable inside its own select event leaves the ray interactor holding a
+        // dead reference, which made the replacement button unclickable.
+        Vector3 offset = new Vector3(
+            Random.Range(-repositionRadius, repositionRadius),
+            Random.Range(-repositionRadius * 0.4f, repositionRadius * 0.4f),
+            0f);
+        if (Mathf.Abs(offset.x) < repositionRadius * 0.4f)
+        {
+            offset.x = Mathf.Sign(offset.x == 0f ? 1f : offset.x) * repositionRadius * 0.6f;
+        }
+
+        Vector3 pos;
+        Quaternion rot;
+        Manager.GetPlacementPose(Manager.practiceDistance, Manager.practiceHeightOffset, out pos, out rot);
+        target.transform.position = pos + rot * offset;
+    }
+
+    private void DestroyTarget()
+    {
+        if (target != null)
+        {
+            target.Pressed -= OnTargetClicked;
+            Destroy(target.gameObject);
+            target = null;
+        }
+    }
+
+    public override string GetProgressLabel()
+    {
+        return requiredClicks > 1 ? $"{clickCount} / {requiredClicks}" : null;
+    }
+
+    public override float GetProgressNormalized()
+    {
+        return requiredClicks > 1 ? (float)clickCount / requiredClicks : -1f;
+    }
+}

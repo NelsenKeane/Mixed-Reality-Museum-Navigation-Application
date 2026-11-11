@@ -1,0 +1,484 @@
+using UnityEngine;
+using UnityEngine.UI;
+using TMPro;
+
+/// <summary>
+/// Handles the MiniGameMenuPanel UI: game title display, previous/next cycling,
+/// start, list (expand), and close buttons.
+/// Attach this script to the MiniGameMenuPanel GameObject.
+/// </summary>
+public class MiniGameMenuPanel : MonoBehaviour
+{
+    public static MiniGameMenuPanel Instance { get; private set; }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Data
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [System.Serializable]
+    public struct GameEntry
+    {
+        [Tooltip("Unique identifier, e.g. 'game_1'. Used by the wrist-path GameListMenu.")]
+        public string gameID;
+        [Tooltip("Display name shown in the title and game list.")]
+        public string gameName;
+        [Tooltip("The panel GameObject activated when this game is started. " +
+                 "Leave empty to stay in the menu (no-op start).")]
+        public GameObject gamePanel;
+    }
+
+    [Header("Games")]
+    public GameEntry[] games = new GameEntry[]
+    {
+        new GameEntry { gameID = "game_1", gameName = "Teka Artifak" },
+        new GameEntry { gameID = "game_2", gameName = "Langkah & Kisah" }
+    };
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // UI References  (assign in Inspector or auto-wired by name)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    [Header("UI References (auto-wired by name if left empty)")]
+    [Tooltip("TMP text that shows the current game name.")]
+    public TMP_Text gameTitle;
+
+    [Tooltip("Cycles to the previous game.")]
+    public Button previousButton;
+
+    [Tooltip("Cycles to the next game.")]
+    public Button nextButton;
+
+    [Tooltip("Starts the currently selected game.")]
+    public Button startButton;
+
+    [Tooltip("Opens the LeaderboardPanel for the current game.")]
+    public Button leaderboardButton;
+
+    [Tooltip("Opens the GameListPanel.")]
+    public Button listButton;
+
+    [Tooltip("Closes the MiniGamesCanvas and restores the wrist watch.")]
+    public Button closeButton;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // State
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private int currentIndex = 0;
+    public int CurrentIndex => currentIndex;
+
+    // Each button here is wired to BOTH a UGUI Button.onClick and an XRButtonSelection.onClick
+    // (see WireButton) so it responds to hand-ray/poke as well as any other pointer path. A
+    // single pinch can trigger more than one of those for the same physical press, which
+    // previously advanced the game cycle twice for what felt like one tap. Debounce each
+    // action independently so a legitimate quick double-tap on two DIFFERENT buttons still
+    // works, but one press can't double-fire the same action.
+    private const float ActionDebounceSeconds = 0.25f;
+    private float lastPreviousTime = -10f;
+    private float lastNextTime = -10f;
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Unity
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private void Awake()
+    {
+        if (Instance == null) Instance = this;
+        else { Destroy(this); return; }
+
+        DeactivateHeaderIcon();
+        AutoFindButtons();
+        EnsureStartButtonTextCrisp();
+        WireButtons();
+    }
+
+    private void OnEnable()
+    {
+        DeactivateHeaderIcon();
+        if (games != null && games.Length > 0)
+        {
+            currentIndex = Mathf.Clamp(currentIndex, 0, games.Length - 1);
+        }
+        RefreshTitle();
+        EnsureLeaderboardButtonVisible();
+        EnsureStartButtonTextCrisp();
+        SetupNavButton(previousButton, true);
+        SetupNavButton(nextButton, false);
+        if (ThemeManager.Instance != null)
+        {
+            ThemeManager.Instance.ApplyToHierarchy(gameObject);
+        }
+    }
+
+    private void EnsureLeaderboardButtonVisible()
+    {
+        if (leaderboardButton == null)
+            leaderboardButton = FindChildButton("LeaderboardButton", "ButtonLeaderboard", "Leaderboard");
+
+        if (leaderboardButton != null && !leaderboardButton.gameObject.activeSelf)
+        {
+            leaderboardButton.gameObject.SetActive(true);
+        }
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Button Handlers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Cycle to the previous game, wrapping from first → last.</summary>
+    public void OnPrevious()
+    {
+        if (Time.unscaledTime - lastPreviousTime < ActionDebounceSeconds) return;
+        lastPreviousTime = Time.unscaledTime;
+
+        if (games == null || games.Length == 0) return;
+        currentIndex = (currentIndex - 1 + games.Length) % games.Length;
+        RefreshTitle();
+        Debug.Log($"MiniGameMenuPanel: ← {games[currentIndex].gameName}");
+    }
+
+    /// <summary>Cycle to the next game, wrapping from last → first.</summary>
+    public void OnNext()
+    {
+        if (Time.unscaledTime - lastNextTime < ActionDebounceSeconds) return;
+        lastNextTime = Time.unscaledTime;
+
+        if (games == null || games.Length == 0) return;
+        currentIndex = (currentIndex + 1) % games.Length;
+        RefreshTitle();
+        Debug.Log($"MiniGameMenuPanel: → {games[currentIndex].gameName}");
+    }
+
+    /// <summary>
+    /// Start the currently selected game.
+    /// If no panel is assigned for the selection, stays in the menu.
+    /// </summary>
+    public void StartSelected()
+    {
+        if (games == null || games.Length == 0) return;
+        
+        GameObject panel = games[currentIndex].gamePanel;
+        if (panel == null)
+        {
+            panel = ResolveGamePanel(games[currentIndex].gameID);
+        }
+
+        MiniGames.Instance?.StartGame(panel);
+    }
+
+    private GameObject ResolveGamePanel(string gameId)
+    {
+        if (string.IsNullOrEmpty(gameId)) return null;
+
+        string cleanId = gameId.ToLower();
+        if (cleanId == "game_1")
+        {
+            Game1GuessName g1 = FindObjectOfType<Game1GuessName>(true);
+            if (g1 != null) return g1.gameObject;
+        }
+        else if (cleanId == "game_2" || cleanId == "game_3")
+        {
+            Game2OrderProcess g2 = FindObjectOfType<Game2OrderProcess>(true);
+            if (g2 != null) return g2.gameObject;
+        }
+
+        // Scene search fallback by name
+        string targetName = cleanId == "game_1" ? "Game1Panel" : "Game2Panel";
+        foreach (Transform t in Resources.FindObjectsOfTypeAll<Transform>())
+        {
+            if (t.name.Equals(targetName, System.StringComparison.OrdinalIgnoreCase) && t.gameObject.scene.IsValid())
+                return t.gameObject;
+        }
+        return null;
+    }
+
+    /// <summary>Tell MiniGames to show the LeaderboardPanel for the active game selection.</summary>
+    public void ShowLeaderboard()
+    {
+        if (games == null || games.Length == 0) return;
+        string gameId = games[currentIndex].gameID;
+        string gameName = games[currentIndex].gameName;
+        MiniGames.Instance?.ShowLeaderboardPanel(gameId, gameName);
+    }
+
+    /// <summary>Tell MiniGames to show the GameListPanel.</summary>
+    public void ShowList()
+    {
+        MiniGames.Instance?.ShowGameListPanel();
+    }
+
+    /// <summary>Tell MiniGames to hide the entire canvas and restore the wrist watch.</summary>
+    public void Close()
+    {
+        MiniGames.Instance?.CloseCanvas();
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Public API (used by MiniGameListPanel and the wrist-path StartGame shim)
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// <summary>Select a game by its index in the games array and refresh the title.</summary>
+    public void SelectGame(int index)
+    {
+        if (games == null || index < 0 || index >= games.Length) return;
+        currentIndex = index;
+        RefreshTitle();
+    }
+
+    /// <summary>Select a game by its gameID string and refresh the title.</summary>
+    public void SelectGameById(string gameId)
+    {
+        if (games == null || string.IsNullOrEmpty(gameId)) return;
+        for (int i = 0; i < games.Length; i++)
+        {
+            if (games[i].gameID == gameId)
+            {
+                currentIndex = i;
+                RefreshTitle();
+                return;
+            }
+        }
+        Debug.LogWarning($"MiniGameMenuPanel: No game found with ID '{gameId}'.");
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // Helpers
+    // ─────────────────────────────────────────────────────────────────────────
+
+    private void RefreshTitle()
+    {
+        if (gameTitle == null || games == null || games.Length == 0) return;
+        gameTitle.text = games[currentIndex].gameName;
+        gameTitle.enableAutoSizing = true;
+        gameTitle.fontSizeMin = 10f;
+        gameTitle.fontSizeMax = 24f;
+        gameTitle.enableWordWrapping = true;
+        gameTitle.overflowMode = TextOverflowModes.Ellipsis;
+        gameTitle.alignment = TextAlignmentOptions.Center;
+    }
+
+    private void AutoFindButtons()
+    {
+        // Try to find buttons by common child names if not assigned in Inspector
+        if (gameTitle         == null) gameTitle         = FindChildTMP("GameTitle", "TitleText", "GameTitleText");
+        if (previousButton    == null) previousButton    = FindChildButton("PreviousButton", "PrevButton", "ButtonPrev", "LeftArrow");
+        if (nextButton        == null) nextButton        = FindChildButton("NextButton",     "ButtonNext",  "RightArrow");
+        if (startButton       == null) startButton       = FindChildButton("StartButton",    "ButtonStart", "Mulai", "MulaiButton");
+        if (leaderboardButton == null) leaderboardButton = FindChildButton("LeaderboardButton", "ButtonLeaderboard", "Leaderboard");
+        if (listButton        == null) listButton        = FindChildButton("ListButton",     "ExpandButton","ButtonList","ButtonExpand");
+        if (closeButton       == null) closeButton       = FindChildButton("CloseButton",    "ButtonClose", "CloseBtn");
+    }
+
+    private void WireButtons()
+    {
+        WireButton(previousButton?.gameObject,    OnPrevious);
+        WireButton(nextButton?.gameObject,        OnNext);
+        WireButton(startButton?.gameObject,       StartSelected);
+        WireButton(leaderboardButton?.gameObject, ShowLeaderboard);
+        WireButton(listButton?.gameObject,        ShowList);
+        WireButton(closeButton?.gameObject,       Close);
+    }
+
+    private static void WireButton(GameObject obj, UnityEngine.Events.UnityAction action)
+    {
+        if (obj == null) return;
+        Button btn = obj.GetComponent<Button>();
+        if (btn != null)
+        {
+            btn.onClick.RemoveAllListeners();
+            btn.onClick.AddListener(action);
+            if (btn.targetGraphic != null) btn.targetGraphic.raycastTarget = true;
+        }
+        XRButtonSelection xr = obj.GetComponent<XRButtonSelection>();
+        if (xr != null) { xr.onClick.RemoveAllListeners(); xr.onClick.AddListener(action); }
+
+        if (obj.GetComponent<UIButtonAudio>() == null)
+        {
+            obj.AddComponent<UIButtonAudio>();
+        }
+    }
+
+    private Button FindChildButton(params string[] names)
+    {
+        foreach (string n in names)
+        {
+            Transform t = FindDeepChild(transform, n);
+            if (t != null)
+            {
+                Button b = t.GetComponent<Button>() ?? t.GetComponentInChildren<Button>(true);
+                if (b != null) return b;
+            }
+        }
+        return null;
+    }
+
+    private TMP_Text FindChildTMP(params string[] names)
+    {
+        foreach (string n in names)
+        {
+            Transform t = FindDeepChild(transform, n);
+            if (t != null)
+            {
+                TMP_Text txt = t.GetComponent<TMP_Text>();
+                if (txt != null) return txt;
+            }
+        }
+        return GetComponentInChildren<TMP_Text>(true);
+    }
+
+    private static Transform FindDeepChild(Transform root, string childName)
+    {
+        if (root == null) return null;
+        foreach (Transform t in root.GetComponentsInChildren<Transform>(true))
+            if (t != null && t.name == childName) return t;
+        return null;
+    }
+
+    private void DeactivateHeaderIcon()
+    {
+        Transform headerIcon = transform.Find("HeaderIcon");
+        if (headerIcon != null && headerIcon.gameObject.activeSelf)
+        {
+            headerIcon.gameObject.SetActive(false);
+        }
+    }
+
+    private void SetupNavButton(Button btn, bool isLeft)
+    {
+        if (btn == null) return;
+
+        // Ensure child Icon exists with the 23.png chevron arrow sprite
+        Transform iconT = btn.transform.Find("Icon");
+        Image iconImg = null;
+        if (iconT != null)
+        {
+            iconImg = iconT.GetComponent<Image>();
+        }
+        else
+        {
+            GameObject iconObj = new GameObject("Icon", typeof(RectTransform), typeof(CanvasRenderer), typeof(Image));
+            iconObj.transform.SetParent(btn.transform, false);
+            iconT = iconObj.transform;
+            iconImg = iconObj.GetComponent<Image>();
+        }
+
+        RectTransform rt = iconT as RectTransform;
+        if (rt != null)
+        {
+            rt.anchorMin = new Vector2(0.2f, 0.2f);
+            rt.anchorMax = new Vector2(0.8f, 0.8f);
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+            rt.localScale = Vector3.one;
+        }
+
+        Image parentImg = btn.GetComponent<Image>();
+        if (iconImg != null)
+        {
+            if (iconImg.sprite == null)
+            {
+                if (parentImg != null && parentImg.sprite != null && parentImg.sprite.name == "23")
+                {
+                    iconImg.sprite = parentImg.sprite;
+                }
+                else if (ThemeManager.Instance != null && ThemeManager.Instance.TryGetOriginalSprite(parentImg, out var origSprite) && origSprite != null)
+                {
+                    iconImg.sprite = origSprite;
+                }
+            }
+            iconImg.color = Color.white;
+            iconImg.type = Image.Type.Simple;
+            iconImg.preserveAspect = true;
+            iconImg.raycastTarget = false;
+        }
+    }
+
+    /// <summary>
+    /// Ensures the Mulai (Start) button uses a razor-sharp TextMeshProUGUI component
+    /// with Cardo-Regular SDF font, bold styling, auto-sizing, and centered alignment,
+    /// upgrading legacy UI Text automatically if detected.
+    /// </summary>
+    private void EnsureStartButtonTextCrisp()
+    {
+        if (startButton == null)
+        {
+            startButton = FindChildButton("StartButton", "ButtonStart", "Mula", "Mulai", "MulaiButton");
+        }
+        if (startButton == null) return;
+
+        // Check if there is a legacy Text component attached to StartButton or its children
+        Text legacyText = startButton.GetComponentInChildren<Text>(true);
+        string labelText = "Mula";
+        if (legacyText != null)
+        {
+            if (!string.IsNullOrEmpty(legacyText.text)) labelText = legacyText.text.Trim();
+            GameObject targetObj = legacyText.gameObject;
+            Destroy(legacyText);
+
+            TextMeshProUGUI newTmp = targetObj.GetComponent<TextMeshProUGUI>();
+            if (newTmp == null) newTmp = targetObj.AddComponent<TextMeshProUGUI>();
+            ConfigureTmp(newTmp, labelText);
+            return;
+        }
+
+        TextMeshProUGUI existingTmp = startButton.GetComponentInChildren<TextMeshProUGUI>(true);
+        if (existingTmp != null)
+        {
+            string curText = string.IsNullOrEmpty(existingTmp.text) ? labelText : existingTmp.text.Trim();
+            if (curText.Equals("Mulai", System.StringComparison.OrdinalIgnoreCase)) curText = "Mula";
+            ConfigureTmp(existingTmp, curText);
+        }
+        else
+        {
+            Transform childText = startButton.transform.Find("Text") ?? startButton.transform.Find("Text (Legacy)");
+            GameObject textObj = childText != null ? childText.gameObject : new GameObject("Text", typeof(RectTransform));
+            if (childText == null)
+            {
+                textObj.transform.SetParent(startButton.transform, false);
+            }
+            TextMeshProUGUI addedTmp = textObj.GetComponent<TextMeshProUGUI>() ?? textObj.AddComponent<TextMeshProUGUI>();
+            ConfigureTmp(addedTmp, labelText);
+        }
+    }
+
+    private void ConfigureTmp(TextMeshProUGUI tmp, string text)
+    {
+        if (tmp == null) return;
+
+        tmp.text = text;
+
+        // Inherit Cardo-Regular SDF font from gameTitle or fallback
+        if (tmp.font == null || tmp.font.name.Contains("LiberationSans"))
+        {
+            if (gameTitle != null && gameTitle.font != null)
+            {
+                tmp.font = gameTitle.font;
+            }
+            else
+            {
+                TMP_FontAsset cardoFont = Resources.Load<TMP_FontAsset>("Fonts/Cardo-Regular SDF");
+                if (cardoFont != null) tmp.font = cardoFont;
+            }
+        }
+
+        tmp.fontStyle = FontStyles.Bold;
+        tmp.alignment = TextAlignmentOptions.Center;
+        tmp.enableAutoSizing = true;
+        tmp.fontSizeMin = 8f;
+        tmp.fontSizeMax = 14f;
+        tmp.raycastTarget = false;
+        tmp.richText = true;
+        tmp.overflowMode = TextOverflowModes.Ellipsis;
+
+        RectTransform rt = tmp.rectTransform;
+        if (rt != null)
+        {
+            rt.anchorMin = Vector2.zero;
+            rt.anchorMax = Vector2.one;
+            rt.offsetMin = Vector2.zero;
+            rt.offsetMax = Vector2.zero;
+            rt.localScale = Vector3.one;
+        }
+    }
+}
+

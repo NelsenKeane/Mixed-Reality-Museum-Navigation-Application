@@ -1,0 +1,240 @@
+using System.Collections;
+using UnityEngine;
+using UnityEngine.UI;
+using UnityEngine.XR.Interaction.Toolkit;
+using UnityEngine.Events;
+using UnityEngine.EventSystems;
+
+public class XRButtonSelection : XRSimpleInteractable, IPointerEnterHandler, IPointerExitHandler, IPointerDownHandler, IPointerClickHandler
+{
+    [Header("Visual Configurations")]
+    [Tooltip("Target UI Image to color-transition on hover.")]
+    public Image buttonImage;
+
+    [Tooltip("Scale target transform (e.g., the button container). Defaults to this transform.")]
+    public Transform scaleTarget;
+
+    [Header("Colors & Animation")]
+    public Color normalColor = new Color(0.9f, 0.9f, 0.93f, 0.8f); // Translucent light gray/white
+    public Color hoverColor = new Color(0.8f, 0.85f, 0.96f, 0.95f); // Soft lavender-blue highlight
+    public float hoverScaleMultiplier = 1.08f;
+    public float transitionSpeed = 8f;
+
+    [Header("Button Events")]
+    [Tooltip("UnityEvent invoked when the button is tapped/selected.")]
+    public UnityEvent onClick = new UnityEvent();
+
+    private Vector3 originalScale;
+    private Vector3 targetScale;
+    private Color targetColor;
+
+    // A single physical pinch can fire BOTH OnSelectEntered (XRI's physics-based select,
+    // since these buttons carry a Collider for hand-ray/poke support) AND OnPointerDown
+    // (UGUI's pointer events via the graphic raycaster) within the same frame or two -
+    // which invoked onClick twice for one press (e.g. Next/Previous skipping an extra
+    // step). Debounce collapses any repeat invoke within this window into a no-op.
+    private const float ClickDebounceSeconds = 0.25f;
+    private float lastInvokeTime = -10f;
+
+    // Set when a press already fired on pinch-down (OnSelectEntered / OnPointerDown), so the
+    // OnPointerClick that UGUI sends on release doesn't fire it a second time. The time-based
+    // debounce alone missed holds longer than ClickDebounceSeconds, which made toggles like
+    // the narration Play/Pause flip back on release.
+    private bool pressHandled;
+
+    private void InvokeClickOnce()
+    {
+        if (Time.unscaledTime - lastInvokeTime < ClickDebounceSeconds) return;
+        lastInvokeTime = Time.unscaledTime;
+        ButtonClickAudio.PlayClickSound();
+        onClick.Invoke();
+    }
+
+    private bool IsWristWatchButton()
+    {
+        if (WristWatch.Instance != null && WristWatch.Instance.wristWatchButtonObj != null)
+        {
+            if (gameObject == WristWatch.Instance.wristWatchButtonObj || transform.IsChildOf(WristWatch.Instance.wristWatchButtonObj.transform))
+            {
+                if (WristWatch.Instance.optionsPanelObj != null && transform.IsChildOf(WristWatch.Instance.optionsPanelObj.transform))
+                {
+                    return false;
+                }
+                return true;
+            }
+        }
+        string n = gameObject.name.ToLower();
+        return n.Contains("wristwatch") || n.Contains("watchbutton");
+    }
+
+    public override bool IsSelectableBy(IXRSelectInteractor interactor)
+    {
+        if (!isActiveAndEnabled) return false;
+        if (IsWristWatchButton())
+        {
+            if (WristWatch.Instance != null && WristWatch.Instance.IsWatchButtonHidden())
+            {
+                return false;
+            }
+            if (WristWatchFilterUtility.IsLeftHand(interactor))
+            {
+                return false;
+            }
+        }
+        return base.IsSelectableBy(interactor);
+    }
+
+    public override bool IsHoverableBy(IXRHoverInteractor interactor)
+    {
+        if (!isActiveAndEnabled) return false;
+        if (IsWristWatchButton())
+        {
+            if (WristWatch.Instance != null && WristWatch.Instance.IsWatchButtonHidden())
+            {
+                return false;
+            }
+            if (WristWatchFilterUtility.IsLeftHand(interactor))
+            {
+                return false;
+            }
+        }
+        return base.IsHoverableBy(interactor);
+    }
+
+    protected override void Awake()
+    {
+        base.Awake();
+        
+        if (scaleTarget == null)
+        {
+            scaleTarget = transform;
+        }
+
+        // Guard against bad hover scales.
+        hoverScaleMultiplier = Mathf.Clamp(hoverScaleMultiplier, 1f, 1.15f);
+
+        originalScale = scaleTarget.localScale;
+        targetScale = originalScale;
+        targetColor = normalColor;
+
+        if (buttonImage != null)
+        {
+            buttonImage.color = normalColor;
+        }
+    }
+
+    private void Update()
+    {
+        // Smoothly interpolate scale and color transitions
+        if (scaleTarget != null)
+        {
+            scaleTarget.localScale = Vector3.Lerp(scaleTarget.localScale, targetScale, Time.deltaTime * transitionSpeed);
+        }
+
+        if (buttonImage != null)
+        {
+            buttonImage.color = Color.Lerp(buttonImage.color, targetColor, Time.deltaTime * transitionSpeed);
+        }
+    }
+
+    protected override void OnHoverEntered(HoverEnterEventArgs args)
+    {
+        if (IsWristWatchButton())
+        {
+            if (WristWatch.Instance != null && WristWatch.Instance.IsWatchButtonHidden()) return;
+            if (WristWatchFilterUtility.IsLeftHand(args.interactorObject)) return;
+        }
+        base.OnHoverEntered(args);
+        
+        targetScale = originalScale * hoverScaleMultiplier;
+        targetColor = hoverColor;
+        
+        XRButtonHaptics.TriggerHover(args.interactorObject, gameObject);
+    }
+
+    protected override void OnHoverExited(HoverExitEventArgs args)
+    {
+        if (IsWristWatchButton())
+        {
+            if (WristWatch.Instance != null && WristWatch.Instance.IsWatchButtonHidden()) return;
+            if (WristWatchFilterUtility.IsLeftHand(args.interactorObject)) return;
+        }
+        base.OnHoverExited(args);
+        
+        targetScale = originalScale;
+        targetColor = normalColor;
+    }
+
+    protected override void OnSelectEntered(SelectEnterEventArgs args)
+    {
+        if (IsWristWatchButton())
+        {
+            if (WristWatch.Instance != null && WristWatch.Instance.IsWatchButtonHidden()) return;
+            if (WristWatchFilterUtility.IsLeftHand(args.interactorObject)) return;
+        }
+        base.OnSelectEntered(args);
+        
+        Debug.Log($"Button Selected/Pressed: {gameObject.name}");
+        InvokeClickOnce();
+        pressHandled = true;
+
+        XRButtonHaptics.TriggerClick(args.interactorObject, gameObject);
+    }
+
+    #region UI Pointer Handlers (For Graphic Raycasting / Pinching)
+    public void OnPointerEnter(PointerEventData eventData)
+    {
+        if (IsWristWatchButton())
+        {
+            if (WristWatch.Instance != null && WristWatch.Instance.IsWatchButtonHidden()) return;
+            if (WristWatchFilterUtility.IsLeftHand(null, eventData)) return;
+        }
+        targetScale = originalScale * hoverScaleMultiplier;
+        targetColor = hoverColor;
+
+        XRButtonHaptics.TriggerHover(eventData, gameObject);
+    }
+
+    public void OnPointerExit(PointerEventData eventData)
+    {
+        if (IsWristWatchButton())
+        {
+            if (WristWatch.Instance != null && WristWatch.Instance.IsWatchButtonHidden()) return;
+            if (WristWatchFilterUtility.IsLeftHand(null, eventData)) return;
+        }
+        targetScale = originalScale;
+        targetColor = normalColor;
+    }
+
+    public void OnPointerDown(PointerEventData eventData)
+    {
+        if (IsWristWatchButton())
+        {
+            if (WristWatch.Instance != null && WristWatch.Instance.IsWatchButtonHidden()) return;
+            if (WristWatchFilterUtility.IsLeftHand(null, eventData)) return;
+        }
+        Debug.Log($"Button UI Clicked/Pressed: {gameObject.name}");
+        InvokeClickOnce();
+        pressHandled = true;
+
+        XRButtonHaptics.TriggerClick(eventData, gameObject);
+    }
+
+    public void OnPointerClick(PointerEventData eventData)
+    {
+        if (IsWristWatchButton())
+        {
+            if (WristWatch.Instance != null && WristWatch.Instance.IsWatchButtonHidden()) return;
+            if (WristWatchFilterUtility.IsLeftHand(null, eventData)) return;
+        }
+        // PointerDown or OnSelectEntered already fired this press - releasing must not fire it again
+        if (pressHandled)
+        {
+            pressHandled = false;
+            return;
+        }
+        InvokeClickOnce();
+        XRButtonHaptics.TriggerClick(eventData, gameObject);
+    }
+    #endregion
+}

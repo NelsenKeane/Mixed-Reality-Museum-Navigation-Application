@@ -1,0 +1,35 @@
+%YAML 1.1
+%TAG !u! tag:unity3d.com,2011:
+--- !u!114 &11400000
+MonoBehaviour:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: 6e8c5dd542f197a40a8e49868a21bb1f, type: 3}
+  m_Name: TragediMegatPanjiAlam
+  m_EditorClassIdentifier:
+  historyId: sejarah_tragedi_megat_panji_alam
+  topTitle: Sejarah Terengganu
+  category: Cerita Rakyat
+  eventTitle: Tragedi Megat Panji Alam
+  timePeriod: Zaman Kesultanan Melaka (Legenda)
+  location: Pahang & Melaka
+  description: 'Tragedi Megat Panji Alam merupakan sebuah kisah bersejarah yang masyhur dalam sastera Melayu klasik dan Hikayat Hang Tuah:
+
+    • Utusan Peminangan Diraja: Peristiwa bermula apabila Laksamana Hang Tuah ditugaskan meminang Tun Teja bagi pihak Sultan Melaka, lalu bertindak membawa Tun Teja berlayar dari Pahang ke Melaka.
+
+    • Perkhabaran Tunang Dilarikan: Apabila berita tersebut sampai ke Terengganu dan Megat Panji Alam mengetahui bahawa tunangnya telah dilarikan, kemurkaan menyelubungi dirinya.
+
+    • Ekspedisi Menuntut Bela: Tanpa berlengah, beliau segera memimpin angkatan dan belayar ke Pahang untuk menentang Hang Tuah serta menuntut bela atas maruahnya.
+
+    • Pertembungan Tragis: Namun dalam pertembungan di istana, Megat Panji Alam akhirnya gugur secara tragis apabila beliau ditikam oleh Hang Jebat dan Hang Kasturi di anak tangga istana.'
+  images:
+  - sprite: {fileID: 21300000, guid: 3bbe7ac8fb508bc48aab6f911b170ff2, type: 3}
+    caption: 'Tragedi Megat Panji Alam'
+  displaySprite: {fileID: 21300000, guid: 3bbe7ac8fb508bc48aab6f911b170ff2, type: 3}
+  videoClip: {fileID: 32900000, guid: b5992a517807f5c47aba44443fc0b226, type: 3}
+  narrationClip: {fileID: 8300000, guid: f45310f6e1cc8f747ab040e904b9bfde, type: 3}
